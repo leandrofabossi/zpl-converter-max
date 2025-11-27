@@ -1,0 +1,8 @@
+ZPL_Web/
+│
+├── app.py                (O cérebro - Seu código Python adaptado)
+├── uploads/              (Pasta vazia onde os arquivos do cliente vão chegar)
+├── downloads/            (Pasta vazia onde os PDFs prontos vão ficar)
+│
+└── templates/            (Crie esta pasta)
+    └── index.html        (A cara do site)

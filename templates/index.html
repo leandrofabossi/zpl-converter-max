@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZPL CONVERSOR MAX</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 400px; text-align: center; }
+        h1 { color: #333; margin-bottom: 10px; }
+        p { color: #666; font-size: 14px; margin-bottom: 25px; }
+        
+        .upload-box { border: 2px dashed #ccc; padding: 30px; border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: 0.3s; }
+        .upload-box:hover { border-color: #007bff; background-color: #f0f8ff; }
+        
+        textarea { width: 100%; height: 100px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px; font-family: monospace; box-sizing: border-box; }
+        
+        button { background-color: #007bff; color: white; border: none; padding: 12px 25px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%; transition: 0.3s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        .alert { color: red; font-size: 13px; margin-bottom: 15px; font-weight: bold; display: none; }
+        .badge { background: #e1e1e1; padding: 5px 10px; border-radius: 20px; font-size: 12px; color: #555; margin: 0 5px; }
+        
+        /* Loader e Progresso */
+        #loader-area { display: none; margin-top: 20px; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .progress-text { font-weight: bold; color: #333; margin-top: 5px; font-size: 16px; }
+        .progress-sub { font-size: 12px; color: #777; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>ZPL Converter MAX</h1>
+    <p>
+        <span class="badge">Shopee</span>
+        <span class="badge">Mercado Livre</span>
+    </p>
+
+    <div id="alert-box" class="alert"></div>
+
+    <div id="input-area">
+        <div class="upload-box" onclick="document.getElementById('fileInput').click()">
+            <p id="file-name">📂 Clique para escolher arquivo<br>(ZIP ou TXT)</p>
+            <input type="file" id="fileInput" style="display: none;" onchange="atualizarNome()">
+        </div>
+        <div style="text-align: center; color: #aaa; margin: 10px 0;">OU COLE ABAIXO</div>
+        <textarea id="zplCode" placeholder="Cole o código ZPL aqui..."></textarea>
+        <button type="button" id="btn-submit" onclick="enviar()">CONVERTER AGORA</button>
+    </div>
+
+    <div id="loader-area">
+        <div class="loader"></div>
+        <div class="progress-text" id="prog-main">Iniciando...</div>
+        <div class="progress-sub" id="prog-sub">Aguarde</div>
+    </div>
+</div>
+
+<script>
+    let intervaloProgresso = null;
+
+    function atualizarNome() {
+        const input = document.getElementById('fileInput');
+        if (input.files.length > 0) {
+            document.getElementById('file-name').innerText = "📄 " + input.files[0].name;
+        }
+    }
+
+    function iniciarMonitoramento() {
+        // Pergunta ao servidor o status a cada 500ms (meio segundo)
+        intervaloProgresso = setInterval(() => {
+            fetch('/progress')
+                .then(r => r.json())
+                .then(data => {
+                    const status = data.status;
+                    const atual = data.atual;
+                    const total = data.total;
+
+                    if (status === 'convertendo') {
+                        document.getElementById('prog-main').innerText = `Convertendo ${atual} / ${total}`;
+                        
+                        // Calcula porcentagem
+                        const pct = Math.round((atual / total) * 100);
+                        document.getElementById('prog-sub').innerText = `${pct}% concluído`;
+                    } 
+                    else if (status === 'analisando') {
+                        document.getElementById('prog-main').innerText = "Analisando arquivo...";
+                    }
+                    else if (status === 'finalizando') {
+                        document.getElementById('prog-main').innerText = "Gerando PDF...";
+                    }
+                });
+        }, 500);
+    }
+
+    function pararMonitoramento() {
+        if (intervaloProgresso) clearInterval(intervaloProgresso);
+    }
+
+    function enviar() {
+        const fileInput = document.getElementById('fileInput');
+        const zplCode = document.getElementById('zplCode').value;
+        const btn = document.getElementById('btn-submit');
+        const alertBox = document.getElementById('alert-box');
+        const loader = document.getElementById('loader-area');
+
+        alertBox.style.display = 'none';
+
+        if (fileInput.files.length === 0 && zplCode.trim().length < 10) {
+            alertBox.innerText = "Selecione um arquivo ou cole o código!";
+            alertBox.style.display = 'block';
+            return;
+        }
+
+        // Trava UI
+        btn.disabled = true;
+        btn.innerText = "Enviando...";
+        loader.style.display = 'block';
+        document.getElementById('prog-main').innerText = "Enviando...";
+        document.getElementById('prog-sub').innerText = "";
+
+        const formData = new FormData();
+        if (fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
+        formData.append('zpl_code', zplCode);
+
+        // Começa a vigiar o progresso
+        iniciarMonitoramento();
+
+        // Envia o arquivo
+        fetch('/convert', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            pararMonitoramento(); // Para de perguntar
+            
+            if (data.error) {
+                alertBox.innerText = data.error;
+                alertBox.style.display = 'block';
+                btn.disabled = false;
+                btn.innerText = "TENTAR NOVAMENTE";
+                loader.style.display = 'none';
+            } else {
+                document.getElementById('prog-main').innerText = "Concluído!";
+                document.getElementById('prog-sub').innerText = "Baixando...";
+                window.location.href = data.redirect;
+                
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.innerText = "CONVERTER OUTRO";
+                    loader.style.display = 'none';
+                }, 3000);
+            }
+        })
+        .catch(() => {
+            pararMonitoramento();
+            alertBox.innerText = "Erro de conexão.";
+            alertBox.style.display = 'block';
+            btn.disabled = false;
+            btn.innerText = "TENTAR NOVAMENTE";
+            loader.style.display = 'none';
+        });
+    }
+</script>
+</body>
+</html>
