@@ -5,70 +5,88 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ZPL CONVERSOR MAX</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f4f7f6; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        
+        /* Topo */
+        .user-bar { text-align: right; padding: 15px 30px; background-color: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .user-bar a { color: #dc3545; text-decoration: none; font-weight: bold; margin-left: 10px; }
+
+        /* Centro */
+        .main-wrapper { flex: 1; display: flex; justify-content: center; align-items: center; }
         .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 400px; text-align: center; }
-        h1 { color: #333; margin-bottom: 10px; }
-        p { color: #666; font-size: 14px; margin-bottom: 25px; }
+        h1 { color: #333; margin-bottom: 10px; margin-top: 0; }
         
         .upload-box { border: 2px dashed #ccc; padding: 30px; border-radius: 8px; margin-bottom: 20px; cursor: pointer; transition: 0.3s; }
         .upload-box:hover { border-color: #007bff; background-color: #f0f8ff; }
-        
         textarea { width: 100%; height: 100px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px; font-family: monospace; box-sizing: border-box; }
-        
         button { background-color: #007bff; color: white; border: none; padding: 12px 25px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%; transition: 0.3s; }
         button:hover { background-color: #0056b3; }
         button:disabled { background-color: #ccc; cursor: not-allowed; }
-
-        .alert { color: red; font-size: 13px; margin-bottom: 15px; font-weight: bold; display: none; }
+        .alert { color: red; font-size: 13px; margin-bottom: 15px; display: none; font-weight: bold; }
         .badge { background: #e1e1e1; padding: 5px 10px; border-radius: 20px; font-size: 12px; color: #555; margin: 0 5px; }
         
+        /* Progresso */
         #loader-area { display: none; margin-top: 20px; }
         .loader { border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
-        .prog-text { font-weight: bold; color: #333; margin-top: 5px; }
-        .prog-pct { font-size: 12px; color: #777; }
+        .prog-text { font-weight: bold; color: #333; margin-top: 5px; font-size: 16px; }
+        .prog-sub { font-size: 12px; color: #777; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>ZPL Converter MAX</h1>
-    <p>
-        <span class="badge">Shopee</span>
-        <span class="badge">Mercado Livre</span>
-    </p>
+    <div class="user-bar">
+        Olá, <b>{{ current_user.username }}</b> | 
+        <a href="/logout">Sair</a>
+    </div>
 
-    <div id="alert-box" class="alert"></div>
+    <div class="main-wrapper">
+        <div class="container">
+            <h1>ZPL Converter MAX</h1>
+            <p style="color:#666; font-size:14px; margin-bottom:25px;">
+                <span class="badge">Shopee</span><span class="badge">Mercado Livre</span>
+            </p>
 
-    <div id="input-area">
-        <div class="upload-box" onclick="document.getElementById('fileInput').click()">
-            <p id="file-name">📂 Clique para escolher arquivo<br>(ZIP ou TXT)</p>
-            <input type="file" id="fileInput" style="display: none;" onchange="atualizarNome()">
+            <div id="alert-box" class="alert"></div>
+
+            <div id="interface-principal">
+                <div class="upload-box" onclick="document.getElementById('fileInput').click()">
+                    <p id="file-name">📂 Clique para escolher arquivo<br>(ZIP ou TXT)</p>
+                    <input type="file" id="fileInput" style="display: none;" onchange="document.getElementById('file-name').innerText = '📄 ' + this.files[0].name">
+                </div>
+                <div style="text-align: center; color: #aaa; margin: 10px 0;">OU COLE ABAIXO</div>
+                <textarea id="zplCode" placeholder="Cole o código ZPL aqui..."></textarea>
+                <button type="button" id="btn-submit" onclick="enviar()">CONVERTER AGORA</button>
+            </div>
+
+            <div id="loader-area">
+                <div class="loader"></div>
+                <div class="prog-text" id="prog-main">Iniciando...</div>
+                <div class="prog-sub" id="prog-sub">0%</div>
+            </div>
         </div>
-        <div style="text-align: center; color: #aaa; margin: 10px 0;">OU COLE ABAIXO</div>
-        <textarea id="zplCode" placeholder="Cole o código ZPL aqui..."></textarea>
-        <button type="button" id="btn-submit" onclick="iniciar()">CONVERTER AGORA</button>
     </div>
-
-    <div id="loader-area">
-        <div class="loader"></div>
-        <div class="prog-text" id="status-msg">Iniciando...</div>
-        <div class="prog-pct" id="status-pct">0%</div>
-    </div>
-</div>
 
 <script>
     let timer = null;
 
-    function atualizarNome() {
-        const input = document.getElementById('fileInput');
-        if (input.files.length > 0) {
-            document.getElementById('file-name').innerText = "📄 " + input.files[0].name;
-        }
+    function monitorar() {
+        // Pergunta o progresso a cada 0.5s
+        timer = setInterval(() => {
+            fetch('/progress')
+            .then(r => r.json())
+            .then(data => {
+                if(data.status === 'convertendo') {
+                    const pct = Math.round((data.atual / data.total) * 100);
+                    document.getElementById('prog-main').innerText = `Convertendo ${data.atual}/${data.total}`;
+                    document.getElementById('prog-sub').innerText = `${pct}%`;
+                }
+            });
+        }, 500);
     }
 
-    function iniciar() {
+    function enviar() {
         const fileInput = document.getElementById('fileInput');
         const zplCode = document.getElementById('zplCode').value;
         const btn = document.getElementById('btn-submit');
@@ -78,81 +96,53 @@
         alertBox.style.display = 'none';
 
         if (fileInput.files.length === 0 && zplCode.trim().length < 10) {
-            alertBox.innerText = "Selecione um arquivo ou cole o código!";
+            alertBox.innerText = "Selecione um arquivo!";
             alertBox.style.display = 'block';
             return;
         }
 
-        // Trava
         btn.disabled = true;
         btn.innerText = "Enviando...";
         loader.style.display = 'block';
-        document.getElementById('status-msg').innerText = "Enviando arquivo...";
+        document.getElementById('prog-main').innerText = "Preparando...";
+        document.getElementById('prog-sub').innerText = "";
 
         const formData = new FormData();
         if (fileInput.files.length > 0) formData.append('file', fileInput.files[0]);
         formData.append('zpl_code', zplCode);
 
-        // 1. Manda o arquivo e pega o ID da tarefa
-        fetch('/start', { method: 'POST', body: formData })
+        monitorar(); // Começa a vigiar
+
+        fetch('/convert', { method: 'POST', body: formData })
         .then(r => r.json())
         .then(data => {
+            clearInterval(timer); // Para de vigiar
+            
             if (data.error) {
-                erro(data.error);
+                alertBox.innerText = data.error;
+                alertBox.style.display = 'block';
+                btn.disabled = false;
+                btn.innerText = "TENTAR NOVAMENTE";
+                loader.style.display = 'none';
             } else {
-                // 2. Começa a monitorar o progresso
-                monitorarProgresso(data.task_id);
+                document.getElementById('prog-main').innerText = "Concluído!";
+                document.getElementById('prog-sub').innerText = "Baixando...";
+                window.location.href = data.redirect;
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.innerText = "CONVERTER OUTRO";
+                    loader.style.display = 'none';
+                }, 3000);
             }
         })
-        .catch(() => erro("Erro de conexão."));
-    }
-
-    function monitorarProgresso(taskId) {
-        timer = setInterval(() => {
-            fetch(`/status/${taskId}`)
-            .then(r => r.json())
-            .then(data => {
-                const status = data.status;
-                
-                if (status === 'convertendo') {
-                    const atual = data.atual;
-                    const total = data.total;
-                    const pct = Math.round((atual / total) * 100);
-                    
-                    document.getElementById('status-msg').innerText = `Convertendo ${atual} de ${total}...`;
-                    document.getElementById('status-pct').innerText = `${pct}%`;
-                }
-                else if (status === 'concluido') {
-                    clearInterval(timer);
-                    document.getElementById('status-msg').innerText = "Concluído! Baixando...";
-                    document.getElementById('status-pct').innerText = "100%";
-                    window.location.href = data.download_url;
-                    
-                    setTimeout(() => {
-                        document.getElementById('btn-submit').disabled = false;
-                        document.getElementById('btn-submit').innerText = "CONVERTER OUTRO";
-                        document.getElementById('loader-area').style.display = 'none';
-                    }, 3000);
-                }
-                else if (status === 'erro') {
-                    clearInterval(timer);
-                    erro(data.msg || "Erro na conversão");
-                }
-            })
-            .catch(() => {
-                clearInterval(timer);
-                erro("Perda de conexão com o servidor");
-            });
-        }, 1000); // Pergunta a cada 1 segundo
-    }
-
-    function erro(msg) {
-        const alertBox = document.getElementById('alert-box');
-        alertBox.innerText = msg;
-        alertBox.style.display = 'block';
-        document.getElementById('btn-submit').disabled = false;
-        document.getElementById('btn-submit').innerText = "TENTAR DE NOVO";
-        document.getElementById('loader-area').style.display = 'none';
+        .catch(() => {
+            clearInterval(timer);
+            alertBox.innerText = "Erro de conexão.";
+            alertBox.style.display = 'block';
+            btn.disabled = false;
+            btn.innerText = "TENTAR NOVAMENTE";
+            loader.style.display = 'none';
+        });
     }
 </script>
 </body>
