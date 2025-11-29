@@ -14,8 +14,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 app.secret_key = "zpl_max_money_pro"
 
-# --- MERCADO PAGO CONFIG ---
-# Certifique-se que este token é o de PRODUÇÃO (APP_USR-...)
+# --- MERCADO PAGO CONFIG (SEU TOKEN) ---
 sdk = mercadopago.SDK("APP_USR-e97cc02f-0008-40aa-8339-d5e6d3ff6f4c")
 
 # --- BANCO DE DADOS ---
@@ -38,10 +37,8 @@ class User(UserMixin, db.Model):
     is_paid = db.Column(db.Boolean, default=False)
 
 with app.app_context():
-    try:
-        db.create_all()
-    except:
-        pass
+    try: db.create_all()
+    except: pass
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -56,64 +53,56 @@ URL_API = 'http://api.labelary.com/v1/printers/8dpmm/labels/4x6/0/'
 HEADERS = {'Accept': 'application/pdf'}
 PROGRESSO_POR_USUARIO = {}
 
-# --- ROTA DE COMPRA SEGURA ---
+# --- ROTA DE ASSINATURA (MENSAL) ---
 @app.route('/comprar')
 @login_required
 def comprar():
     try:
-        preference_data = {
-            "items": [
-                {
-                    "title": "ZPL Max Premium",
-                    "quantity": 1,
-                    "unit_price": 29.90,
-                    "currency_id": "BRL"
-                }
-            ],
-            "payer": {
-                "email": "cliente_teste@email.com"  # MP exige um email, mesmo que fictício
+        # Dados da Assinatura (Preapproval)
+        subscription_data = {
+            "reason": "Assinatura Mensal - ZPL Max",
+            "external_reference": str(current_user.id),
+            "payer_email": "test_user_123456@testuser.com", # MP exige um email placeholder
+            "auto_recurring": {
+                "frequency": 1,
+                "frequency_type": "months",
+                "transaction_amount": 29.90,
+                "currency_id": "BRL"
             },
-            "back_urls": {
-                "success": request.url_root,
-                "failure": request.url_root,
-                "pending": request.url_root
-            },
-            "auto_return": "approved",
-            "external_reference": str(current_user.id)
+            "back_url": request.url_root # Volta para o site após assinar
         }
 
-        # Tenta criar a preferência
-        print("--> Enviando pedido ao Mercado Pago...")
-        preference_response = sdk.preference().create(preference_data)
+        # Cria a assinatura
+        print("--> Criando assinatura...")
+        result = sdk.preapproval().create(subscription_data)
+        print("--> Resposta MP:", result)
         
-        # Debug no Log (Olhe a tela preta se der erro)
-        print("--> Resposta do MP:", preference_response)
-
-        # Verifica se deu certo antes de redirecionar
-        if "response" in preference_response and "init_point" in preference_response["response"]:
-            return redirect(preference_response["response"]["init_point"])
+        if "response" in result and "init_point" in result["response"]:
+            return redirect(result["response"]["init_point"])
         else:
-            # Se falhou, mostra o erro na tela para você saber o motivo
-            return jsonify({
-                "erro": "O Mercado Pago recusou a criacao do link.",
-                "detalhes": preference_response
-            }), 500
+            return f"Erro ao criar assinatura no Mercado Pago: {result}", 500
 
     except Exception as e:
-        return jsonify({"erro_interno": str(e)}), 500
+        return f"Erro interno: {str(e)}", 500
 
+# --- WEBHOOK (Recebe o pagamento da assinatura) ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     topic = request.args.get('topic')
     id = request.args.get('id')
+
+    # O Mercado Pago manda aviso de 'payment' toda vez que a mensalidade é paga
     if topic == 'payment':
         payment_info = sdk.payment().get(id)
         if payment_info["response"]['status'] == 'approved':
             user_id = payment_info["response"]['external_reference']
+            # Libera o acesso do usuário
             user = User.query.get(int(user_id))
             if user:
                 user.is_paid = True
                 db.session.commit()
+                print(f"--> Mensalidade recebida! Cliente {user.username} liberado.")
+
     return jsonify({"status": "ok"}), 200
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -167,7 +156,7 @@ def progress():
 @login_required
 def convert():
     if not current_user.is_paid: 
-        return jsonify({'error': 'Pagamento pendente.'}), 403
+        return jsonify({'error': 'Assinatura pendente.'}), 403
         
     global PROGRESSO_POR_USUARIO
     user_id = current_user.id
@@ -192,27 +181,17 @@ def convert():
                 except: 
                     return jsonify({'error': 'ZIP inválido'}), 400
             else:
-                try: 
-                    with open(path, 'r', encoding='utf-8') as f: 
-                        conteudo = f.read()
-                except: 
-                    with open(path, 'r', encoding='latin-1') as f: 
-                        conteudo = f.read()
-                        
-        elif texto: 
-            conteudo = texto
-        else: 
-            return jsonify({'error': 'Vazio'}), 400
+                try: with open(path, 'r', encoding='utf-8') as f: conteudo = f.read()
+                except: with open(path, 'r', encoding='latin-1') as f: conteudo = f.read()
+        elif texto: conteudo = texto
+        else: return jsonify({'error': 'Vazio'}), 400
         
-        if len(conteudo) < 10: 
-            return jsonify({'error': 'Curto'}), 400
+        if len(conteudo) < 10: return jsonify({'error': 'Curto'}), 400
 
         PROGRESSO_POR_USUARIO[user_id]['status'] = 'analisando'
         lista = logica_hibrida(conteudo)
         total = len(lista)
-        
-        if total == 0: 
-            return jsonify({'error': 'Sem etiquetas'}), 400
+        if total == 0: return jsonify({'error': 'Sem etiquetas'}), 400
         
         PROGRESSO_POR_USUARIO[user_id] = {'status': 'convertendo', 'atual': 0, 'total': total}
         merger = PdfWriter()
@@ -228,10 +207,8 @@ def convert():
                         merger.append(io.BytesIO(r.content))
                         sucesso_count += 1
                         break
-                    elif r.status_code == 429: 
-                        time.sleep(3)
-                except: 
-                    time.sleep(2)
+                    elif r.status_code == 429: time.sleep(3)
+                except: time.sleep(2)
                 tentativas += 1
             time.sleep(0.5)
         
@@ -239,24 +216,51 @@ def convert():
         if sucesso_count > 0:
             ts = int(time.time())
             nome = f"{filename_base}_{ts}.pdf"
-            with open(os.path.join(DOWNLOAD_FOLDER, nome), "wb") as f: 
-                merger.write(f)
-            
+            with open(os.path.join(DOWNLOAD_FOLDER, nome), "wb") as f: merg = merger.write(f)
             PROGRESSO_POR_USUARIO[user_id]['status'] = 'concluido'
             return jsonify({'success': True, 'redirect': f'/download/{nome}'})
         else:
             PROGRESSO_POR_USUARIO[user_id]['status'] = 'erro'
             return jsonify({'error': 'Falha API'}), 500
 
-    except Exception as e: 
-        return jsonify({'error': str(e)}), 500
+    except Exception as e: return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')
 @login_required
 def download_file(filename):
     return send_file(os.path.join(DOWNLOAD_FOLDER, filename), as_attachment=True)
 
-# --- ROTA ADMIN E RESET ---
+@app.route('/admin')
+@login_required
+def admin_panel():
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    return render_template('admin.html', users=User.query.all())
+
+@app.route('/admin/add', methods=['POST'])
+@login_required
+def admin_add_user():
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    username = request.form.get('username')
+    password = request.form.get('password')
+    if User.query.filter_by(username=username).first():
+        flash('Usuário existe.')
+    else:
+        u = User(username=username, password=generate_password_hash(password, method='pbkdf2:sha256'), is_paid=True)
+        db.session.add(u)
+        db.session.commit()
+        flash(f'Criado: {username}')
+    return redirect(url_for('admin_panel'))
+
+@app.route('/admin/delete/<int:id>')
+@login_required
+def admin_delete_user(id):
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    u = User.query.get(id)
+    if u and u.username != 'admin':
+        db.session.delete(u)
+        db.session.commit()
+    return redirect(url_for('admin_panel'))
+
 @app.route('/resetar-tudo-agora')
 def reset_db():
     try:
@@ -266,70 +270,23 @@ def reset_db():
             admin = User(username='admin', password=generate_password_hash('admin123', method='pbkdf2:sha256'), is_paid=True)
             db.session.add(admin)
             db.session.commit()
-        return "BANCO RESETADO. Admin: admin/admin123"
-    except Exception as e:
-        return f"Erro: {str(e)}"
-
-@app.route('/admin')
-@login_required
-def admin_panel():
-    if current_user.username != 'admin': return redirect(url_for('index'))
-    todos_usuarios = User.query.all()
-    return render_template('admin.html', users=todos_usuarios)
-
-@app.route('/admin/add', methods=['POST'])
-@login_required
-def admin_add_user():
-    if current_user.username != 'admin': return redirect(url_for('index'))
-    username = request.form.get('username')
-    password = request.form.get('password')
-    if User.query.filter_by(username=username).first():
-        flash('Usuário já existe.')
-    else:
-        new_user = User(username=username, password=generate_password_hash(password, method='pbkdf2:sha256'), is_paid=True)
-        db.session.add(new_user)
-        db.session.commit()
-        flash(f'Cliente {username} criado!')
-    return redirect(url_for('admin_panel'))
-
-@app.route('/admin/delete/<int:id>')
-@login_required
-def admin_delete_user(id):
-    if current_user.username != 'admin': return redirect(url_for('index'))
-    user_to_delete = User.query.get(id)
-    if user_to_delete:
-        if user_to_delete.username == 'admin': flash("Não pode deletar admin.")
-        else:
-            db.session.delete(user_to_delete)
-            db.session.commit()
-            flash("Usuário removido.")
-    return redirect(url_for('admin_panel'))
+        return "BANCO RESETADO."
+    except Exception as e: return f"Erro: {str(e)}"
 
 def logica_hibrida(conteudo):
     lista = re.findall(r'(\^XA.*?\^XZ)', conteudo, re.DOTALL)
-    if not lista: 
-        return []
-    
+    if not lista: return []
     p1 = lista[0]
-    
-    if "^GFA" in p1 or ("~DGR" in p1 and "^XA" in p1): 
-        return lista
+    if "^GFA" in p1 or ("~DGR" in p1 and "^XA" in p1): return lista
     elif "~DGR" in conteudo:
         raw = conteudo.split('^XZ')
-        v = []
-        for p in raw:
-            if len(p.strip()) > 5:
-                v.append(p + "^XZ")
-        
+        v = [p + "^XZ" for p in raw if len(p.strip()) > 5]
         final = []
         for i in range(0, len(v), 2):
             p1 = v[i]
-            if i+1 < len(v): 
-                final.append(p1 + "\n" + v[i+1])
-            else: 
-                final.append(p1)
+            if i+1 < len(v): final.append(p1 + "\n" + v[i+1])
+            else: final.append(p1)
         return final
-    
     return lista
 
 if __name__ == "__main__":
