@@ -18,11 +18,12 @@
         <button type="submit">Adicionar</button>
     </form>
     <table>
-        <tr><th>ID</th><th>Usuário</th><th>Ação</th></tr>
+        <tr><th>ID</th><th>Usuário</th><th>Pago?</th><th>Ação</th></tr>
         {% for user in users %}
         <tr>
             <td>{{ user.id }}</td>
             <td>{{ user.username }}</td>
+            <td>{{ '✅ Sim' if user.is_paid else '❌ Não' }}</td>
             <td>{% if user.username != 'admin' %}<a href="/admin/delete/{{ user.id }}" class="btn">X</a>{% endif %}</td>
         </tr>
         {% endfor %}
