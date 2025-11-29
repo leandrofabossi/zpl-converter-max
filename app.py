@@ -14,8 +14,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 app.secret_key = "zpl_max_money_pro"
 
+# --- MERCADO PAGO CONFIG ---
+# Certifique-se que este token é o de PRODUÇÃO (APP_USR-...)
 sdk = mercadopago.SDK("APP_USR-e97cc02f-0008-40aa-8339-d5e6d3ff6f4c")
 
+# --- BANCO DE DADOS ---
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -53,21 +56,51 @@ URL_API = 'http://api.labelary.com/v1/printers/8dpmm/labels/4x6/0/'
 HEADERS = {'Accept': 'application/pdf'}
 PROGRESSO_POR_USUARIO = {}
 
+# --- ROTA DE COMPRA SEGURA ---
 @app.route('/comprar')
 @login_required
 def comprar():
-    preference_data = {
-        "items": [{"title": "ZPL Max Premium", "quantity": 1, "unit_price": 29.90, "currency_id": "BRL"}],
-        "back_urls": {
-            "success": request.url_root,
-            "failure": request.url_root,
-            "pending": request.url_root
-        },
-        "auto_return": "approved",
-        "external_reference": str(current_user.id)
-    }
-    preference_response = sdk.preference().create(preference_data)
-    return redirect(preference_response["response"]["init_point"])
+    try:
+        preference_data = {
+            "items": [
+                {
+                    "title": "ZPL Max Premium",
+                    "quantity": 1,
+                    "unit_price": 29.90,
+                    "currency_id": "BRL"
+                }
+            ],
+            "payer": {
+                "email": "cliente_teste@email.com"  # MP exige um email, mesmo que fictício
+            },
+            "back_urls": {
+                "success": request.url_root,
+                "failure": request.url_root,
+                "pending": request.url_root
+            },
+            "auto_return": "approved",
+            "external_reference": str(current_user.id)
+        }
+
+        # Tenta criar a preferência
+        print("--> Enviando pedido ao Mercado Pago...")
+        preference_response = sdk.preference().create(preference_data)
+        
+        # Debug no Log (Olhe a tela preta se der erro)
+        print("--> Resposta do MP:", preference_response)
+
+        # Verifica se deu certo antes de redirecionar
+        if "response" in preference_response and "init_point" in preference_response["response"]:
+            return redirect(preference_response["response"]["init_point"])
+        else:
+            # Se falhou, mostra o erro na tela para você saber o motivo
+            return jsonify({
+                "erro": "O Mercado Pago recusou a criacao do link.",
+                "detalhes": preference_response
+            }), 500
+
+    except Exception as e:
+        return jsonify({"erro_interno": str(e)}), 500
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -223,7 +256,7 @@ def convert():
 def download_file(filename):
     return send_file(os.path.join(DOWNLOAD_FOLDER, filename), as_attachment=True)
 
-# --- ROTAS ADMIN E RESET ---
+# --- ROTA ADMIN E RESET ---
 @app.route('/resetar-tudo-agora')
 def reset_db():
     try:
@@ -241,25 +274,35 @@ def reset_db():
 @login_required
 def admin_panel():
     if current_user.username != 'admin': return redirect(url_for('index'))
-    return render_template('admin.html', users=User.query.all())
+    todos_usuarios = User.query.all()
+    return render_template('admin.html', users=todos_usuarios)
 
 @app.route('/admin/add', methods=['POST'])
 @login_required
 def admin_add_user():
     if current_user.username != 'admin': return redirect(url_for('index'))
-    user = User(username=request.form.get('username'), password=generate_password_hash(request.form.get('password'), method='pbkdf2:sha256'), is_paid=True)
-    db.session.add(user)
-    db.session.commit()
+    username = request.form.get('username')
+    password = request.form.get('password')
+    if User.query.filter_by(username=username).first():
+        flash('Usuário já existe.')
+    else:
+        new_user = User(username=username, password=generate_password_hash(password, method='pbkdf2:sha256'), is_paid=True)
+        db.session.add(new_user)
+        db.session.commit()
+        flash(f'Cliente {username} criado!')
     return redirect(url_for('admin_panel'))
 
 @app.route('/admin/delete/<int:id>')
 @login_required
 def admin_delete_user(id):
     if current_user.username != 'admin': return redirect(url_for('index'))
-    u = User.query.get(id)
-    if u and u.username != 'admin':
-        db.session.delete(u)
-        db.session.commit()
+    user_to_delete = User.query.get(id)
+    if user_to_delete:
+        if user_to_delete.username == 'admin': flash("Não pode deletar admin.")
+        else:
+            db.session.delete(user_to_delete)
+            db.session.commit()
+            flash("Usuário removido.")
     return redirect(url_for('admin_panel'))
 
 def logica_hibrida(conteudo):
@@ -269,11 +312,8 @@ def logica_hibrida(conteudo):
     
     p1 = lista[0]
     
-    # Mercado Livre
-    if "^GFA" in p1 or ("~DGR" in p1 and "^XA" in p1):
+    if "^GFA" in p1 or ("~DGR" in p1 and "^XA" in p1): 
         return lista
-    
-    # Shopee
     elif "~DGR" in conteudo:
         raw = conteudo.split('^XZ')
         v = []
@@ -284,9 +324,9 @@ def logica_hibrida(conteudo):
         final = []
         for i in range(0, len(v), 2):
             p1 = v[i]
-            if i+1 < len(v):
+            if i+1 < len(v): 
                 final.append(p1 + "\n" + v[i+1])
-            else:
+            else: 
                 final.append(p1)
         return final
     
