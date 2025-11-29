@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Painel Admin</title>
+    <style>
+        body{font-family:sans-serif;padding:20px;background:#f4f7f6}
+        table{width:100%;border-collapse:collapse;background:white}
+        th,td{padding:10px;border:1px solid #ddd}
+        .btn{background:red;color:white;padding:5px;text-decoration:none;border-radius:3px}
+    </style>
+</head>
+<body>
+    <h1>Painel Admin</h1>
+    <form method="POST" action="/admin/add" style="margin-bottom:20px">
+        <input type="text" name="username" placeholder="Usuário" required>
+        <input type="password" name="password" placeholder="Senha" required>
+        <button type="submit">Adicionar</button>
+    </form>
+    <table>
+        <tr><th>ID</th><th>Usuário</th><th>Ação</th></tr>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.id }}</td>
+            <td>{{ user.username }}</td>
+            <td>{% if user.username != 'admin' %}<a href="/admin/delete/{{ user.id }}" class="btn">X</a>{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    <a href="/">Voltar</a>
+</body>
+</html>

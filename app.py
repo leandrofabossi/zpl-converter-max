@@ -15,9 +15,10 @@ app = Flask(__name__)
 app.secret_key = "zpl_max_money_pro"
 
 # --- MERCADO PAGO CONFIG ---
+# Seu Token real já está aqui:
 sdk = mercadopago.SDK("APP_USR-e97cc02f-0008-40aa-8339-d5e6d3ff6f4c")
 
-# --- BANCO DE DADOS ---
+# --- BANCO DE DADOS (Inteligente: Nuvem ou Local) ---
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -158,14 +159,12 @@ def convert():
                 except: 
                     return jsonify({'error': 'ZIP inválido'}), 400
             else:
-                # --- BLOCO CORRIGIDO E EXPANDIDO ---
                 try: 
                     with open(path, 'r', encoding='utf-8') as f: 
                         conteudo = f.read()
                 except: 
                     with open(path, 'r', encoding='latin-1') as f: 
                         conteudo = f.read()
-                # -----------------------------------
                         
         elif texto: 
             conteudo = texto
@@ -204,7 +203,6 @@ def convert():
             time.sleep(0.5)
         
         PROGRESSO_POR_USUARIO[user_id]['status'] = 'finalizando'
-        
         if sucesso_count > 0:
             ts = int(time.time())
             nome = f"{filename_base}_{ts}.pdf"
@@ -227,9 +225,66 @@ def download_file(filename):
 
 def logica_hibrida(conteudo):
     lista = re.findall(r'(\^XA.*?\^XZ)', conteudo, re.DOTALL)
-    if not lista: return []
+    if not lista: 
+        return []
+    
     p1 = lista[0]
     
     if "^GFA" in p1 or ("~DGR" in p1 and "^XA" in p1): 
         return lista
     elif "~DGR" in conteudo:
+        raw = conteudo.split('^XZ')
+        v = []
+        for p in raw:
+            if len(p.strip()) > 5:
+                v.append(p + "^XZ")
+        
+        final = []
+        for i in range(0, len(v), 2):
+            p1 = v[i]
+            if i+1 < len(v): 
+                final.append(p1 + "\n" + v[i+1])
+            else: 
+                final.append(p1)
+        return final
+    
+    return lista
+
+# Rota Admin (Inclusa para garantir)
+@app.route('/admin')
+@login_required
+def admin_panel():
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    todos_usuarios = User.query.all()
+    return render_template('admin.html', users=todos_usuarios)
+
+@app.route('/admin/add', methods=['POST'])
+@login_required
+def admin_add_user():
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    username = request.form.get('username')
+    password = request.form.get('password')
+    if User.query.filter_by(username=username).first():
+        flash('Usuário já existe.')
+    else:
+        new_user = User(username=username, password=generate_password_hash(password, method='pbkdf2:sha256'))
+        db.session.add(new_user)
+        db.session.commit()
+        flash(f'Cliente {username} criado!')
+    return redirect(url_for('admin_panel'))
+
+@app.route('/admin/delete/<int:id>')
+@login_required
+def admin_delete_user(id):
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    user_to_delete = User.query.get(id)
+    if user_to_delete:
+        if user_to_delete.username == 'admin': flash("Não pode deletar admin.")
+        else:
+            db.session.delete(user_to_delete)
+            db.session.commit()
+            flash("Usuário removido.")
+    return redirect(url_for('admin_panel'))
+
+if __name__ == "__main__":
+    app.run(debug=True, threaded=True)
