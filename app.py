@@ -15,11 +15,11 @@ app = Flask(__name__)
 app.secret_key = "zpl_max_money_pro"
 
 # --- MERCADO PAGO CONFIG ---
-# Seu Token real já está aqui:
 sdk = mercadopago.SDK("APP_USR-e97cc02f-0008-40aa-8339-d5e6d3ff6f4c")
 
-# --- BANCO DE DADOS (Inteligente: Nuvem ou Local) ---
+# --- BANCO DE DADOS ---
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
+# Correção para o Render (Postgres requer postgresql://)
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
@@ -37,8 +37,12 @@ class User(UserMixin, db.Model):
     password = db.Column(db.String(150), nullable=False)
     is_paid = db.Column(db.Boolean, default=False)
 
+# Tenta criar as tabelas ao iniciar
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+    except:
+        pass
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -223,6 +227,57 @@ def convert():
 def download_file(filename):
     return send_file(os.path.join(DOWNLOAD_FOLDER, filename), as_attachment=True)
 
+# --- ROTA ADMIN ---
+@app.route('/admin')
+@login_required
+def admin_panel():
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    todos_usuarios = User.query.all()
+    return render_template('admin.html', users=todos_usuarios)
+
+@app.route('/admin/add', methods=['POST'])
+@login_required
+def admin_add_user():
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    username = request.form.get('username')
+    password = request.form.get('password')
+    if User.query.filter_by(username=username).first():
+        flash('Usuário já existe.')
+    else:
+        new_user = User(username=username, password=generate_password_hash(password, method='pbkdf2:sha256'), is_paid=True)
+        db.session.add(new_user)
+        db.session.commit()
+        flash(f'Cliente {username} criado!')
+    return redirect(url_for('admin_panel'))
+
+@app.route('/admin/delete/<int:id>')
+@login_required
+def admin_delete_user(id):
+    if current_user.username != 'admin': return redirect(url_for('index'))
+    user_to_delete = User.query.get(id)
+    if user_to_delete:
+        if user_to_delete.username == 'admin': flash("Não pode deletar admin.")
+        else:
+            db.session.delete(user_to_delete)
+            db.session.commit()
+            flash("Usuário removido.")
+    return redirect(url_for('admin_panel'))
+
+# --- ROTA DE EMERGÊNCIA (RESETAR BANCO) ---
+@app.route('/resetar-tudo-agora')
+def reset_db():
+    try:
+        with app.app_context():
+            db.drop_all()
+            db.create_all()
+            # Cria admin padrão
+            admin = User(username='admin', password=generate_password_hash('admin123', method='pbkdf2:sha256'), is_paid=True)
+            db.session.add(admin)
+            db.session.commit()
+        return "BANCO DE DADOS RESETADO COM SUCESSO! Tente logar com admin/admin123."
+    except Exception as e:
+        return f"Erro: {str(e)}"
+
 def logica_hibrida(conteudo):
     lista = re.findall(r'(\^XA.*?\^XZ)', conteudo, re.DOTALL)
     if not lista: 
@@ -230,7 +285,7 @@ def logica_hibrida(conteudo):
     
     p1 = lista[0]
     
-    if "^GFA" in p1 or ("~DGR" in p1 and "^XA" in p1): 
+    if "^GFA" in p1 or ("~DGR" in p1 and "^XA" in p1):
         return lista
     elif "~DGR" in conteudo:
         raw = conteudo.split('^XZ')
@@ -249,42 +304,6 @@ def logica_hibrida(conteudo):
         return final
     
     return lista
-
-# Rota Admin (Inclusa para garantir)
-@app.route('/admin')
-@login_required
-def admin_panel():
-    if current_user.username != 'admin': return redirect(url_for('index'))
-    todos_usuarios = User.query.all()
-    return render_template('admin.html', users=todos_usuarios)
-
-@app.route('/admin/add', methods=['POST'])
-@login_required
-def admin_add_user():
-    if current_user.username != 'admin': return redirect(url_for('index'))
-    username = request.form.get('username')
-    password = request.form.get('password')
-    if User.query.filter_by(username=username).first():
-        flash('Usuário já existe.')
-    else:
-        new_user = User(username=username, password=generate_password_hash(password, method='pbkdf2:sha256'))
-        db.session.add(new_user)
-        db.session.commit()
-        flash(f'Cliente {username} criado!')
-    return redirect(url_for('admin_panel'))
-
-@app.route('/admin/delete/<int:id>')
-@login_required
-def admin_delete_user(id):
-    if current_user.username != 'admin': return redirect(url_for('index'))
-    user_to_delete = User.query.get(id)
-    if user_to_delete:
-        if user_to_delete.username == 'admin': flash("Não pode deletar admin.")
-        else:
-            db.session.delete(user_to_delete)
-            db.session.commit()
-            flash("Usuário removido.")
-    return redirect(url_for('admin_panel'))
 
 if __name__ == "__main__":
     app.run(debug=True, threaded=True)
